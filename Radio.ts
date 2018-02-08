@@ -162,7 +162,7 @@ export class Radio {
             await this.setMode(RfMode.Rx);
         }
 
-        freqHz /= Math.floor(RF69_FSTEP); // divide down by FSTEP to get FRF
+        freqHz = Math.floor(freqHz / RF69_FSTEP); // divide down by FSTEP to get FRF
         await this.writeReg(c.REG_FRFMSB, (freqHz >> 16) & 0xFF);
         await this.writeReg(c.REG_FRFMID, (freqHz >> 8) & 0xFF);
         await this.writeReg(c.REG_FRFLSB, freqHz & 0xFF);
