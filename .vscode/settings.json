@@ -1,0 +1,7 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "*.d.ts": true,
+        "*.d.js": true
+    }
+}

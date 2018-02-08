@@ -1,17 +1,19 @@
 {
     "name": "node-rfm69",
-    "version": "1.0.0",
+    "version": "0.0.3",
     "description": "",
     "main": "index.js",
     "scripts": {
         "start": "ts-node index.ts",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "clean": "rm -f *.js && rm -f *.d.ts",
+        "build": "npm run clean && tslint -p . && tsc",
+        "up": "npm run build && npm publish"
     },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/andrei-tatar/node-rfm69.git"
     },
-    "author": "",
+    "author": "Andrei Tatar",
     "license": "ISC",
     "bugs": {
         "url": "https://github.com/andrei-tatar/node-rfm69/issues"

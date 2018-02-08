@@ -4,6 +4,8 @@
         "noImplicitAny": false,
         "sourceMap": false,
         "target": "es2015",
+        "declaration": true,
+        "removeComments": true,
         "lib": [
             "es2015"
         ]

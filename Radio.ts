@@ -236,22 +236,20 @@ export class Radio {
         await this.writeReg(c.REG_TESTPA2, onOff ? 0x7C : 0x70);
     }
 
-    private waitFor(poll: () => Promise<boolean>, timeout = 50, interval = 2) {
+    private waitFor(poll: () => Promise<boolean>, timeout = 50, interval = 1) {
         return Observable.interval(interval)
             .startWith(0)
             .concatMap(() => poll())
             .filter(done => done)
+            .first()
             .timeout(timeout);
     }
 
     private async setSyncAndWait(value: number) {
-        await this.waitFor(
-            async () => {
-                await this.writeReg(c.REG_SYNCVALUE1, value);
-                return await this.readReg(c.REG_SYNCVALUE1) !== value;
-            })
-            .catch(err => Observable.empty<boolean>())
-            .toPromise();
+        await this.waitFor(async () => {
+            await this.writeReg(c.REG_SYNCVALUE1, value);
+            return await this.readReg(c.REG_SYNCVALUE1) === value;
+        }).catch(err => Observable.empty<boolean>()).toPromise();
     }
 
     private async transfer(...data: number[]): Promise<Buffer> {
