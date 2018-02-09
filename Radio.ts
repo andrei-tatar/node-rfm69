@@ -9,6 +9,7 @@ import 'rxjs/add/operator/catch';
 import 'rxjs/add/operator/concatMap';
 import 'rxjs/add/operator/filter';
 import 'rxjs/add/operator/first';
+import 'rxjs/add/operator/map';
 import 'rxjs/add/operator/share';
 import 'rxjs/add/operator/startWith';
 import 'rxjs/add/operator/take';
@@ -34,8 +35,8 @@ export class Radio {
     private _mode: RfMode;
     private _interrupt: Observable<void>;
     private _data = new Subject<{ data: Buffer, rssi: number, from: number }>();
-    private _sendQueue = new Subject<{ data: Buffer, to: number, resolve: () => void, reject: (err) => void }>();
     private _stop: Subject<void>;
+    private _accessQueue = new Subject<AccessRequest>();
 
     get data() {
         return this._data.asObservable();
@@ -67,13 +68,15 @@ export class Radio {
             throw new RadioError('already inited; call stop first!');
         }
         this._stop = new Subject();
-        this._sendQueue
-            .concatMap(async s => {
-                try {
-                    await this.sendInternal(s.to, s.data);
-                    s.resolve();
-                } catch (err) {
-                    s.reject(err);
+        this._accessQueue
+            .concatMap(async req => {
+                switch (req.type) {
+                    case 'interrupt':
+                        await this.handleInterrupt();
+                        break;
+                    case 'send':
+                        await this.sendInternal(req);
+                        break;
                 }
             })
             .takeUntil(this._stop)
@@ -132,7 +135,10 @@ export class Radio {
 
         await this.setHighPower();
         await this.setMode(RfMode.Standby);
-        this._interrupt.takeUntil(this._stop).concatMap(i => this.handleInterrupt()).subscribe();
+        this._interrupt
+            .map(() => ({ type: 'interrupt' }))
+            .takeUntil(this._stop)
+            .subscribe(this._accessQueue);
     }
 
     async encrypt(key?: Buffer) {
@@ -178,11 +184,12 @@ export class Radio {
 
     send(to: number, data: Buffer) {
         return new Promise<void>((resolve, reject) => {
-            this._sendQueue.next({
+            this._accessQueue.next({
                 data,
                 reject,
                 resolve,
                 to,
+                type: 'send',
             });
         });
     }
@@ -282,34 +289,40 @@ export class Radio {
         return false;
     }
 
-    private async sendInternal(to: number, data: Buffer) {
-        if (data.length > 62) {
-            throw new RadioError('radio packet size too big');
-        }
+    private async sendInternal(send: SendDataRequest) {
+        try {
+            if (send.data.length > 62) {
+                throw new RadioError('radio packet size too big');
+            }
 
-        await this.rxRestart();
+            await this.rxRestart();
 
-        await this.waitFor(() => this.canSend(), 500)
-            .catch(() => Observable.empty())
-            .toPromise();
-
-        await this.setMode(RfMode.Standby); // turn off receiver to prevent reception while filling fifo
-        await this.writeReg(c.REG_DIOMAPPING1, c.RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
-
-        // write to FIFO
-        await this.transfer(c.REG_FIFO | 0x80, data.length + 2, to, this._nodeId, ...data);
-
-        const waitForFirstInterrupt =
-            this._interrupt
-                .first()
-                .timeout(50)
-                .catch(() => Observable.throw(new RadioError('timeout while waiting for tx interrupt')))
+            await this.waitFor(() => this.canSend(), 500)
+                .catch(() => Observable.empty())
                 .toPromise();
 
-        // no need to wait for transmit mode to be ready since its handled by the radio
-        await this.setMode(RfMode.Tx);
-        await waitForFirstInterrupt; // wait for DIO0 to turn HIGH signalling transmission finish
-        await this.setMode(RfMode.Standby);
+            await this.setMode(RfMode.Standby); // turn off receiver to prevent reception while filling fifo
+            await this.writeReg(c.REG_DIOMAPPING1, c.RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
+
+            // write to FIFO
+            await this.transfer(c.REG_FIFO | 0x80, send.data.length + 2, send.to, this._nodeId, ...send.data);
+
+            const waitForFirstInterrupt =
+                this._accessQueue
+                    .filter(s => s.type === 'interrupt')
+                    .first()
+                    .timeout(50)
+                    .catch(() => Observable.throw(new RadioError('timeout while waiting for tx interrupt')))
+                    .toPromise();
+
+            // no need to wait for transmit mode to be ready since its handled by the radio
+            await this.setMode(RfMode.Tx);
+            await waitForFirstInterrupt; // wait for DIO0 to turn HIGH signalling transmission finish
+            await this.setMode(RfMode.Standby);
+            send.resolve();
+        } catch (err) {
+            send.reject(err);
+        }
     }
 
     private async readRSSI(forceTrigger: boolean = false) {
@@ -403,4 +416,18 @@ export class Radio {
             });
         }
     }
+}
+
+type AccessRequest = InterruptRequest | SendDataRequest;
+
+interface InterruptRequest {
+    type: 'interrupt';
+}
+
+interface SendDataRequest {
+    type: 'send';
+    data: Buffer;
+    to: number;
+    resolve(): void;
+    reject(err): void;
 }
